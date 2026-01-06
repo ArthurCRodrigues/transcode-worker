@@ -1,46 +1,38 @@
 package scheduler
 
 import (
-	"encoding/json"
-	"net/http"
 	"log"
-	"pkg/models" // Assuming our shared structs are here
+	"transcoder-worker/pkg/models"
+	"transcoder-worker/internal/transcoder"
 )
 
-type Server struct {
-	port string
+type Scheduler struct {
+	jobChan <-chan models.TranscodeJob // Receive-only channel
+	engine  *transcoder.Engine
 }
 
-func NewServer(port string) *Server {
-	return &Server{port: port}
+func New(ch <-chan models.TranscodeJob, eng *transcoder.Engine) *Scheduler {
+	return &Scheduler{
+		jobChan: ch,
+		engine:  eng,
+	}
 }
 
-// Start opens the HTTP port to listen for jobs
-func (s *Server) Start() {
-	http.HandleFunc("/jobs", s.handleJobAssignment)
+// Run starts the background worker that processes jobs one by one
+func (s *Scheduler) Run() {
+	log.Println("Scheduler is standing by for jobs...")
 	
-	log.Printf("Job server listening on port %s", s.port)
-	if err := http.ListenAndServe(":"+s.port, nil); err != nil {
-		log.Fatalf("Server failed: %v", err)
+	// This loop waits for data to arrive on the channel
+	for job := range s.jobChan {
+		log.Printf("Scheduler: Picking up job %s", job.ID)
+		
+		// 1. Build the command
+		cmd := s.engine.BuildCommand(job)
+		
+		// 2. Execute and wait for finish (the Muscle)
+		err := s.engine.Transcode(cmd)
+		if err != nil {
+			log.Printf("Scheduler: Job %s failed: %v", job.ID, err)
+		}
 	}
-}
-
-func (s *Server) handleJobAssignment(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var job models.TranscodeJob
-	if err := json.NewDecoder(r.Body).Decode(&job); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	log.Printf("Received job assignment: %s for file %s", job.JobID, job.SourcePath)
-
-	// TODO: Send this job to the Transcoder Engine
-	
-	w.WriteHeader(http.StatusAccepted)
-	json.NewEncoder(w).Encode(map[string]string{"status": "started"})
 }
