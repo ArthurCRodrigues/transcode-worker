@@ -41,7 +41,7 @@ func NewEngine(allowHW bool, threads int) (*Engine, error) {
 	// 3. Perform hardware discovery.
 	// This function is defined in probe.go
 	if allowHW {
-		engine.probeCapabilities()
+		engine.ProbeCapabilities()
 	} else {
 		engine.bestCodec = CodecSoftware
 		engine.HasHWAccel = false
