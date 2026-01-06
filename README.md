@@ -53,7 +53,7 @@ The idea is that the orchestrator keeps rid of most of the overhead and its only
 # Dataflow 
 The system operates on a Pull-Push hybrid model to keep the Orchestrator's CPU at a minimum.
 
-**1.Register:** The Worker starts and "shouts" its hardware specs to the Udoo.
+**1.Register:** The Worker starts and "shouts" its hardware specs to the Orchestrator.
 
 **Heartbeat:** Every 15s, the Worker updates the Udoo with its CPU load.
 
