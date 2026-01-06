@@ -1,71 +1,91 @@
 package heartbeat
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"time"
+	"transcode-worker/internal/transcoder"
+	"transcode-worker/pkg/models"
 )
 
-// Service handles the periodic ping to the Orchestrator.
 type Service struct {
 	orchestratorURL string
 	interval        time.Duration
 	workerID        string
 	client          *http.Client
+	engine          *transcoder.Engine
 }
 
-// New creates a heartbeat service. We initialize a custom HTTP client 
-// with a timeout so a slow Udoo board doesn't hang our worker.
-func New(url string, intervalSec int, workerID string) *Service {
+func New(url string, intervalSec int, workerID string, engine *transcoder.Engine) *Service {
 	return &Service{
 		orchestratorURL: url,
 		interval:        time.Duration(intervalSec) * time.Second,
 		workerID:        workerID,
+		engine:          engine,
 		client: &http.Client{
 			Timeout: 5 * time.Second,
 		},
 	}
 }
 
-// Start launches the heartbeat loop in a non-blocking way.
 func (s *Service) Start(ctx context.Context) {
-	// Create a ticker that fires every 'interval'
 	ticker := time.NewTicker(s.interval)
 	
-	// 'go' keyword starts this function in a background goroutine
-	go func() {
-		defer ticker.Stop() // Cleanup when the routine exits
-		log.Printf("Heartbeat started for %s", s.workerID)
+	// Perform initial registration
+	s.register()
 
+	go func() {
+		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
-				// If the app shuts down, this channel closes
-				log.Println("Stopping heartbeat...")
 				return
 			case <-ticker.C:
-				// Every tick, execute the ping
-				s.ping()
+				s.sendPulse()
 			}
 		}
 	}()
 }
 
-func (s *Service) ping() {
-	// For now, i'm using a simple GET. Later, i'll change this to POST 
-	// to send hardware stats (CPU usage, etc.)
-	fullURL := fmt.Sprintf("%s/api/heartbeat?id=%s", s.orchestratorURL, s.workerID)
+func (s *Service) register() {
+	specs := s.engine.GetStaticSpecs()
+	reg := models.WorkerRegistration{
+		ID:          s.workerID,
+		BaseURL:     "", // Should be populated from config
+		StaticSpecs: specs,
+	}
+
+	s.post("/v1/workers", reg)
+}
+
+func (s *Service) sendPulse() {
+	health := s.engine.GetSystemHealth()
 	
-	resp, err := s.client.Get(fullURL)
+	hb := models.Heartbeat{
+		Status:    "IDLE", // Later: get from Scheduler
+		Telemetry: health,
+	}
+
+	path := fmt.Sprintf("/v1/workers/%s/heartbeats", s.workerID)
+	s.post(path, hb)
+}
+
+func (s *Service) post(path string, data interface{}) {
+	url := s.orchestratorURL + path
+	body, _ := json.Marshal(data)
+	
+	resp, err := s.client.Post(url, "application/json", bytes.NewBuffer(body))
 	if err != nil {
-		log.Printf("[Heartbeat] Failed: %v", err)
+		log.Printf("[Heartbeat] Request failed: %v", err)
 		return
 	}
-	defer resp.Body.Close() 
+	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("[Heartbeat] Orchestrator returned status: %d", resp.StatusCode)
+	if resp.StatusCode >= 400 {
+		log.Printf("[Heartbeat] Orchestrator error: %d", resp.StatusCode)
 	}
 }
