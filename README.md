@@ -39,7 +39,7 @@ The idea is that the orchestrator keeps rid of most of the overhead and its only
 }
 ```
 ## 3. Job Status Update
-**Purpose:** The Worker tells the Udoo: "I'm 45% done, and here is the URL for the client to watch."
+**Purpose:** The Worker tells the Orchestrator: "I'm 45% done, and here is the URL for the client to watch."
 ```json
 {
   "job_id": "550e8400-e29b-41d4-a716-446655440000",
