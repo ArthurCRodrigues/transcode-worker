@@ -57,12 +57,10 @@ type Heartbeat struct {
 	Error      *WorkerError   `json:"error_context,omitempty"`
 }
 
-// SystemHealth captures real-time hardware metrics gathered by gopsutil and nvml.
+// SystemHealth captures real-time hardware metrics gathered by gopsutil
 type SystemHealth struct {
 	CPUUsage     float64 `json:"cpu_usage"`      // Percentage
-	GPUUsage     float64 `json:"gpu_usage"`      // Percentage
 	RAMFreeBytes uint64  `json:"ram_free_bytes"`
-	TempC        float64 `json:"temp_c"`         // Celsius
 }
 
 // ActiveContext provides progress data for the currently running job.

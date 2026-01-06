@@ -67,11 +67,8 @@ func (e *Engine) GetSystemHealth() models.SystemHealth {
 		cpuUsage = c[0]
 	}
 
-	// Note: GPU usage and Temp require specialized tools (NVML/sensors)
-	// For this first test, we focus on CPU and RAM.
 	return models.SystemHealth{
 		CPUUsage:     cpuUsage,
 		RAMFreeBytes: v.Available,
-		TempC:        0, // Placeholder
 	}
 }
