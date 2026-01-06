@@ -5,7 +5,7 @@ This project provides a worker service managing heavy transcoding jobs. It is me
 Devices that act as workers will continuously announce their availability through heartbeats, where they will also display their:
 - Hardware capabilites
 - Operating system
-- Status (idle, working).
+- Status (`IDLE`, `WORKING`).
   
 By being idle, the worker can be assigned transcoding jobs, where essential data as original filepath, resolution and bitrate is given. When working on the task, the worker constantly updates the orchestrator about its progress and also serves a URL for a local stream. 
 
