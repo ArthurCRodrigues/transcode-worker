@@ -1,0 +1,5 @@
+orchestrator_url: <url-to-your-orchestrator-service>
+worker_id: <unique-identifier-for-this-worker>
+nas_mount_path: <path-to-nas-mount>
+enable_hw_accel: <true-or-false>
+log_level: <debug|info|warn|error>

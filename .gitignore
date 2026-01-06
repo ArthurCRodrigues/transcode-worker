@@ -1,0 +1,54 @@
+# --- Binaries and Executables ---
+# Ignore the compiled outputs for all platforms
+transcode-worker
+transcode-worker.exe
+transcode-worker-mac
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# --- Go Specific ---
+# Ignore the vendor directory (unless you explicitly want to commit it)
+vendor/
+# Ignore test coverage files
+*.out
+*.test
+
+# --- Configurations (IMPORTANT) ---
+# Do NOT commit your active config.yml as it may contain your local IP/Paths
+configs/config.yml
+# Keep the example version so others know what to fill in
+!configs/config.yml.example
+
+# --- Environment Variables ---
+.env
+.env.local
+
+# --- IDEs and OS Specific ---
+# macOS specific
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# JetBrains (GoLand)
+.idea/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Linux/Fedora specific
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# --- Project Specific (Transcoding) ---
+# Ignore the actual video segments generated during testing
+streams/
+internal/transcoder/test_output/
+*.m3u8
+*.ts
+logs/
