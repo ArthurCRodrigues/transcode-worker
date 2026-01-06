@@ -3,6 +3,7 @@ package transcoder
 import (
 	"log"
 	"os/exec"
+	"fmt"
 )
 
 // Execute takes an exec.Cmd and runs it.
