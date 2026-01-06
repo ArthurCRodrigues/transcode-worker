@@ -49,3 +49,16 @@ The idea is that the orchestrator keeps rid of most of the overhead and its only
   "stream_url": "http://192.168.1.50:8080/hls/interstellar/index.m3u8"
 }
 ```
+
+# Dataflow 
+The system operates on a Pull-Push hybrid model to keep the Orchestrator's CPU at a minimum.
+
+**1.Register:** The Worker starts and "shouts" its hardware specs to the Udoo.
+
+**Heartbeat:** Every 15s, the Worker updates the Udoo with its CPU load.
+
+**Job Assign:** Udoo sends a JSON task to the Worker's HTTP port.
+
+**Process:** The Worker spawns a Goroutine (lightweight thread) to run FFmpeg.
+
+**Serve:** The Worker's internal web server hosts the video for the family.
