@@ -1,4 +1,4 @@
-> See [components.md](/components.md) before reading this documentation.
+> See [components.md](docs/components.md) before reading this documentation.
 ```mermaid
 graph TD
     %% External Entities
