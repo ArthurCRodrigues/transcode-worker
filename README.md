@@ -6,16 +6,135 @@ It turns any commodity hardware (RaspberryPi,Linux or Windows pc) into a node in
 
 ## Workflow
 
-The worker operates in a pull based architecture, autonomously discovering its host hardware capabilites and polling the orchestrator for transcoding jobs. 
+The worker operates in a pull-based architecture, autonomously discovering its host hardware capabilities and polling the orchestrator for transcoding jobs. 
 
-Upon startup, the worker performs a deep inspection of its host environment. It manages to discover:
+### 1. Worker Registration
+
+Upon startup, the worker performs a deep inspection of its host environment and registers with the orchestrator:
+
+**Registration Payload (POST `/api/v1/workers/register`):**
+```json
+{
+  "worker_id": "desktop-gaming-pc"
+}
+```
+
+The worker discovers:
 - **CPU** Architecture and core count
-- **GPU Acceleration** by probing `ffmpeg` encoders
-- Real time telemetry monitoring (CPU/RAM usage)
+- **GPU Acceleration** by probing `ffmpeg` encoders (NVENC, QSV, VAAPI)
+- Real-time telemetry monitoring (CPU/RAM usage)
 
-All this data is sent to the orchestrator in heartbeats (which shows that the worker is active) so that it can make intelligent job schedulling decisions (e,g. routing 4K HEVC jovs to GPU accelerated nodes while reserving CPU only nodes for lighter 720p tasks)
+### 2. Heartbeat Loop
 
-For performing jobs, the worker proactively requests work when it's `IDLE` and when the machine is not under heavy load (ex: someone else is gaming in the pc).
+The worker continuously sends heartbeat signals that include hardware stats and current status:
+
+**Heartbeat Payload (POST `/api/v1/workers/heartbeat`):**
+```json
+{
+  "worker_id": "desktop-gaming-pc",
+  "status": "IDLE",
+  "hardware_stats": {
+    "cpu_percent": 15.3,
+    "ram_percent": 42.1,
+    "is_busy": false,
+    "accelerator": {
+      "type": "nvenc",
+      "available": true,
+      "codecs": ["h264_nvenc", "hevc_nvenc"]
+    }
+  },
+  "current_job_id": ""
+}
+```
+
+This data enables the orchestrator to make intelligent job scheduling decisions (e.g., routing 4K HEVC jobs to GPU-accelerated nodes while reserving CPU-only nodes for lighter 720p tasks).
+
+### 3. Job Polling & Assignment
+
+The worker proactively requests work when it's `IDLE` and when the machine is not under heavy load (e.g., someone else is gaming on the PC):
+
+**Job Request Payload (POST `/api/v1/jobs/request`):**
+```json
+{
+  "worker_id": "desktop-gaming-pc",
+  "capabilities": {
+    "supported_codecs": ["h264_nvenc", "hevc_nvenc", "libx264"],
+    "has_gpu": true,
+    "gpu_type": "nvidia"
+  }
+}
+```
+
+**Job Assignment Response:**
+```json
+{
+  "job_id": "job-1767791635",
+  "movie_id": "movie-456",
+  "input": {
+    "source_url": "movies/sample_3840x2160.mkv",
+    "format": "mkv"
+  },
+  "outputs": [
+    {
+      "resolution": "1080p",
+      "bitrate": "5000k",
+      "codec": "h264_nvenc",
+      "dest_path": "processed/sample/1080p/"
+    },
+    {
+      "resolution": "720p",
+      "bitrate": "2500k",
+      "codec": "h264_nvenc",
+      "dest_path": "processed/sample/720p/"
+    }
+  ],
+  "hls_settings": {
+    "master_playlist_name": "index.m3u8",
+    "segment_time": 6
+  }
+}
+```
+
+### 4. Progress Reporting
+
+During transcoding, the worker sends periodic progress updates:
+
+**Progress Update Payload (PATCH `/api/v1/jobs/{job_id}`):**
+```json
+{
+  "worker_id": "desktop-gaming-pc",
+  "status": "PROCESSING",
+  "progress": 45.8,
+  "current_fps": 87.3,
+  "eta_sec": 120
+}
+```
+
+### 5. Job Completion
+
+Upon completion (success or failure), the worker finalizes the job:
+
+**Success Payload (POST `/api/v1/jobs/{job_id}/finalize`):**
+```json
+{
+  "status": "COMPLETED",
+  "manifest_url": "/processed/sample/720p/index.m3u8",
+  "metrics": {
+    "total_time_ms": 245680
+  }
+}
+```
+
+**Failure Payload:**
+```json
+{
+  "status": "FAILED",
+  "error_msg": "input file does not exist: /mnt/nas/movies/sample.mkv",
+  "metrics": {
+    "total_time_ms": 1250
+  }
+}
+```
 
 ### Video HLS Pipeline
 
@@ -33,161 +152,10 @@ Before running the worker, make sure to setup the necessary [configurations](con
 - **FFprobe** for media inspection
 - **Mounted NAS storage** for accessing raw files and storing outputs
 
-Setting up the worker as background service is differet depending on the OS you're in. In this README, i will cover the linux setup, but you can check windows setup [here](docs/setup_windows.md)
+Setting up the worker as background service is differet depending on the OS you're in. The documentation provides guides for linux and windows machines:
+- [linux](docs/setup/linux.md)
+- [windows](docs/setup/windows.md)
 
-### Linux Setup (systemd)
-
-#### 1. Build the Worker
-
-First, build the worker binary:
-
-```bash
-cd /path/to/transcode-worker
-go build -o bin/worker cmd/worker/main.go
-```
-
-Or use the Makefile:
-
-```bash
-make build
-```
-
-#### 2. Configure the Worker
-
-Copy and edit the configuration file:
-
-```bash
-cp config-example.yml config.yml
-nano config.yml
-```
-
-Update the following settings:
-
-```yaml
-orchestrator_url: "http://192.168.1.100:8080"  # Your orchestrator IP
-nas_mount_path: "/mnt/nas"                      # Your NAS mount point
-temp_dir: "/tmp/transcode-worker"               # Fast local storage
-worker_id: ""                                   # Leave empty to use hostname
-heartbeat_interval: 10s
-max_concurrent_jobs: 1
-log_level: "info"
-```
-
-
-
-#### 3. Create systemd Service
-
-Create a systemd service file:
-
-```bash
-sudo nano /etc/systemd/system/transcode-worker.service
-```
-
-Paste the following configuration:
-
-```ini
-[Unit]
-Description=Transcode Worker Service
-Documentation=https://github.com/ArthurCRodrigues/transcode-worker
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=your_username
-Group=your_username
-WorkingDirectory=/path/to/transcode-worker
-ExecStart=/path/to/transcode-worker/bin/worker
-
-# Environment variables (optional - can also use config.yml)
-Environment="WORKER_ORCHESTRATOR_URL=http://192.168.1.100:8080"
-Environment="WORKER_NAS_MOUNT_PATH=/mnt/nas"
-Environment="WORKER_TEMP_DIR=/tmp/transcode-worker"
-
-# Restart configuration
-Restart=always
-RestartSec=10
-
-# Resource limits (optional but recommended)
-LimitNOFILE=65536
-Nice=10
-
-# Logging
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=transcode-worker
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**Important:** Replace:
-- `your_username` with your actual username
-- `/path/to/transcode-worker` with the actual path
-
-#### 4. Enable and Start the Service
-
-```bash
-# Reload systemd to recognize the new service
-sudo systemctl daemon-reload
-
-# Enable the service to start on boot
-sudo systemctl enable transcode-worker
-
-# Start the service
-sudo systemctl start transcode-worker
-
-# Check the status
-sudo systemctl status transcode-worker
-```
-
-#### 5. Verify the Worker is Running
-
-Check the logs to ensure the worker registered successfully:
-
-```bash
-# View recent logs
-sudo journalctl -u transcode-worker -n 50
-
-# Follow logs in real-time
-sudo journalctl -u transcode-worker -f
-
-# Filter by time
-sudo journalctl -u transcode-worker --since "5 minutes ago"
-```
-
-You should see output like:
-
-```
-Starting transcode worker: your-hostname
-Orchestrator URL: http://192.168.1.100:8080
-NAS Mount Path: /mnt/nas
-Registering with orchestrator...
-Successfully registered as worker: your-hostname
-Starting heartbeat loop (interval: 10s)
-Starting job polling loop...
-```
-
-#### 6. Managing the Service
-
-```bash
-# Stop the worker
-sudo systemctl stop transcode-worker
-
-# Restart the worker
-sudo systemctl restart transcode-worker
-
-# Disable auto-start on boot
-sudo systemctl disable transcode-worker
-
-# View service configuration
-sudo systemctl cat transcode-worker
-
-# Check if service is enabled
-sudo systemctl is-enabled transcode-worker
-```
-
-For Windows setup instructions, see [docs/setup_windows.md](docs/setup_windows.md).
 
 
 
