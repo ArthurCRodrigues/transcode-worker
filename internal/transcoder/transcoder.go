@@ -1,206 +1,302 @@
 package transcoder
 
 import (
-	"bufio"
-	"context"
-	"encoding/json"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"strconv"
-	"strings"
+    "bufio"
+    "context"
+    "fmt"
+    "io"
+    "log"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "regexp"
+    "strconv"
+    "strings"
+    //"time"
 
-	"transcode-worker/pkg/models"
+    "transcode-worker/pkg/models"
 )
 
 type FFmpegTranscoder struct {
-	binPath    string
-	probePath  string
-	tempDir    string // Base temp dir
+    tempDir string
 }
 
 func NewTranscoder(tempDir string) *FFmpegTranscoder {
-	return &FFmpegTranscoder{
-		binPath:   "ffmpeg",
-		probePath: "ffprobe",
-		tempDir:   tempDir,
-	}
+    return &FFmpegTranscoder{
+        tempDir: tempDir,
+    }
 }
 
-// Execute handles the full lifecycle of a transcoding job
+// Execute runs the transcoding job
 func (t *FFmpegTranscoder) Execute(ctx context.Context, job *models.JobSpec, progressCh chan<- models.JobProgress) error {
-	// 1. Create a specific temp folder for this job
-	jobTempDir := filepath.Join(t.tempDir, job.JobID)
-	if err := os.MkdirAll(jobTempDir, 0755); err != nil {
-		return fmt.Errorf("failed to create temp dir: %w", err)
-	}
-	// Cleanup on finish (optional, depending on if you want to debug failed jobs)
-	defer os.RemoveAll(jobTempDir)
-
-	// 2. Probe Input to get Duration (needed for progress calculation)
-	durationSec, err := t.probeDuration(ctx, job.InputSource)
-	if err != nil {
-		return fmt.Errorf("probe failed: %w", err)
-	}
-
-	// 3. Construct the FFmpeg Command
-	args := t.buildArgs(job, jobTempDir)
-	
-	cmd := exec.CommandContext(ctx, t.binPath, args...)
-	
-	// 4. Capture Stderr for progress parsing
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("failed to get stderr pipe: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start ffmpeg: %w", err)
-	}
-
-	// 5. Monitor Progress in a Goroutine
-	doneCh := make(chan error, 1)
-	go func() {
-		scanner := bufio.NewScanner(stderrPipe)
-		// Regex to catch "time=00:00:15.45"
-		reTime := regexp.MustCompile(`time=(\d{2}):(\d{2}):(\d{2}\.\d+)`)
-		// Regex to catch "fps= 24"
-		reFPS := regexp.MustCompile(`fps=\s*(\d+)`)
-
-		for scanner.Scan() {
-			line := scanner.Text()
-			
-			// Parse Time for Percentage
-			matches := reTime.FindStringSubmatch(line)
-			if len(matches) == 4 {
-				h, _ := strconv.Atoi(matches[1])
-				m, _ := strconv.Atoi(matches[2])
-				s, _ := strconv.ParseFloat(matches[3], 64)
-				currentSec := float64(h*3600 + m*60) + s
-				
-				pct := (currentSec / durationSec) * 100
-				if pct > 100 { pct = 100 }
-
-				// Parse FPS (Optional, simple extraction)
-				fpsVal := 0.0
-				fpsMatch := reFPS.FindStringSubmatch(line)
-				if len(fpsMatch) > 1 {
-					if v, err := strconv.ParseFloat(fpsMatch[1], 64); err == nil {
-						fpsVal = v
-					}
-				}
-
-				// Send Update
-				select {
-				case progressCh <- models.JobProgress{Percent: pct, FPS: fpsVal}:
-				default:
-					// Drop update if channel is blocked (control plane is slow)
-				}
-			}
-		}
-		doneCh <- scanner.Err()
-	}()
-
-	// 6. Wait for Finish
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("ffmpeg process failed: %w", err)
-	}
-	
-	// 7. Move Files from Temp to Final Destination (NAS)
-	// Note: In a real HLS scenario, we need to move the .m3u8 AND the .ts segments.
-	for _, output := range job.Outputs {
-		// Identify the subfolder in temp for this specific output variant
-		// (This logic matches the buildArgs logic below)
-		variantName := fmt.Sprintf("%s_%s", output.Resolution, output.Bitrate)
-		srcDir := filepath.Join(jobTempDir, variantName)
-		
-		// Ensure destination exists
-		if err := os.MkdirAll(output.DestPath, 0755); err != nil {
-			return fmt.Errorf("failed to create nas dir: %w", err)
-		}
-
-		// Move all files
-		files, _ := os.ReadDir(srcDir)
-		for _, f := range files {
-			oldPath := filepath.Join(srcDir, f.Name())
-			newPath := filepath.Join(output.DestPath, f.Name())
-			if err := os.Rename(oldPath, newPath); err != nil {
-				return fmt.Errorf("failed to move file %s: %w", f.Name(), err)
-			}
-		}
-	}
-
-	return nil
+    log.Printf("Starting transcoding job: %s", job.JobID)
+    
+    // Create job-specific temp directory
+    jobTempDir := filepath.Join(t.tempDir, job.JobID)
+    if err := os.MkdirAll(jobTempDir, 0755); err != nil {
+        return fmt.Errorf("failed to create job temp dir: %w", err)
+    }
+    defer os.RemoveAll(jobTempDir) // Clean up temp files
+    
+    // Get media duration for progress calculation
+    duration, err := t.getMediaDuration(job.GetInputSource())
+    if err != nil {
+        return fmt.Errorf("failed to get media duration: %w", err)
+    }
+    
+    log.Printf("Media duration: %.2f seconds", duration)
+    
+    // Process each output rendition
+    for i, output := range job.Outputs {
+        log.Printf("Processing rendition %d/%d: %s (%s)", i+1, len(job.Outputs), output.Resolution, output.Bitrate)
+        
+        // Create temp output directory for this rendition
+        renditionTempDir := filepath.Join(jobTempDir, fmt.Sprintf("%s_%s", output.Resolution, output.Bitrate))
+        if err := os.MkdirAll(renditionTempDir, 0755); err != nil {
+            return fmt.Errorf("failed to create rendition temp dir: %w", err)
+        }
+        
+        // Transcode to temp directory
+        if err := t.transcodeRendition(ctx, job, output, renditionTempDir, duration, progressCh); err != nil {
+            return fmt.Errorf("failed to transcode %s: %w", output.Resolution, err)
+        }
+        
+        // Copy files from temp to final destination
+        if err := t.copyDirectory(renditionTempDir, output.DestPath); err != nil {
+            return fmt.Errorf("failed to copy output files: %w", err)
+        }
+        
+        log.Printf("Successfully completed rendition: %s", output.Resolution)
+    }
+    
+    log.Printf("Transcoding job completed: %s", job.JobID)
+    return nil
 }
 
-// probeDuration uses ffprobe to get media duration in seconds
-func (t *FFmpegTranscoder) probeDuration(ctx context.Context, path string) (float64, error) {
-	args := []string{
-		"-v", "error",
-		"-show_entries", "format=duration",
-		"-of", "json",
-		path,
-	}
-	cmd := exec.CommandContext(ctx, t.probePath, args...)
-	output, err := cmd.Output()
-	if err != nil {
-		return 0, err
-	}
-
-	type ProbeResult struct {
-		Format struct {
-			Duration string `json:"duration"`
-		} `json:"format"`
-	}
-	var res ProbeResult
-	if err := json.Unmarshal(output, &res); err != nil {
-		return 0, err
-	}
-
-	return strconv.ParseFloat(res.Format.Duration, 64)
+// transcodeRendition processes a single output rendition
+func (t *FFmpegTranscoder) transcodeRendition(
+    ctx context.Context,
+    job *models.JobSpec,
+    output models.OutputSpec,
+    outputDir string,
+    duration float64,
+    progressCh chan<- models.JobProgress,
+) error {
+    // Get HLS settings
+    segmentTime := job.GetSegmentTime()
+    
+    // Build FFmpeg command
+    args := []string{
+        "-i", job.GetInputSource(),
+        "-c:v", output.Codec,
+        "-b:v", output.Bitrate,
+    }
+    
+    // Add resolution scaling if specified
+    if output.Resolution != "" {
+        scale := t.getScaleFilter(output.Resolution)
+        if scale != "" {
+            args = append(args, "-vf", scale)
+        }
+    }
+    
+    // Add audio encoding
+    audioCodec := job.GetAudioCodec()
+    audioBitrate := job.GetAudioBitrate()
+    args = append(args,
+        "-c:a", audioCodec,
+        "-b:a", audioBitrate,
+    )
+    
+    // Add HLS settings
+    args = append(args,
+        "-f", "hls",
+        "-hls_time", fmt.Sprintf("%d", segmentTime),
+        "-hls_playlist_type", "vod",
+        "-hls_segment_filename", filepath.Join(outputDir, "segment_%03d.ts"),
+        filepath.Join(outputDir, "index.m3u8"),
+    )
+    
+    log.Printf("FFmpeg command: ffmpeg %s", strings.Join(args, " "))
+    
+    // Create FFmpeg command
+    cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+    
+    // Capture stderr for progress parsing
+    stderr, err := cmd.StderrPipe()
+    if err != nil {
+        return fmt.Errorf("failed to get stderr pipe: %w", err)
+    }
+    
+    // Start the command
+    if err := cmd.Start(); err != nil {
+        return fmt.Errorf("failed to start ffmpeg: %w", err)
+    }
+    
+    // Parse progress from stderr
+    go t.parseProgress(stderr, duration, progressCh)
+    
+    // Wait for completion
+    if err := cmd.Wait(); err != nil {
+        return fmt.Errorf("ffmpeg failed: %w", err)
+    }
+    
+    return nil
 }
 
-// buildArgs constructs the complex ffmpeg command
-func (t *FFmpegTranscoder) buildArgs(job *models.JobSpec, jobTempDir string) []string {
-	// Basic input args
-	args := []string{
-		"-y",                 // Overwrite output
-		"-i", job.InputSource, // Input file
-		"-hide_banner",
-	}
+// copyDirectory copies all files from src to dst, handling cross-device scenarios
+func (t *FFmpegTranscoder) copyDirectory(src, dst string) error {
+    log.Printf("Copying files from %s to %s", src, dst)
+    
+    // Ensure destination directory exists
+    if err := os.MkdirAll(dst, 0755); err != nil {
+        return fmt.Errorf("failed to create destination directory: %w", err)
+    }
+    
+    // Read all files in source directory
+    entries, err := os.ReadDir(src)
+    if err != nil {
+        return fmt.Errorf("failed to read source directory: %w", err)
+    }
+    
+    // Copy each file
+    for _, entry := range entries {
+        if entry.IsDir() {
+            continue // Skip subdirectories for now
+        }
+        
+        srcFile := filepath.Join(src, entry.Name())
+        dstFile := filepath.Join(dst, entry.Name())
+        
+        if err := t.copyFile(srcFile, dstFile); err != nil {
+            return fmt.Errorf("failed to copy file %s: %w", entry.Name(), err)
+        }
+        
+        log.Printf("Copied: %s", entry.Name())
+    }
+    
+    log.Printf("Successfully copied %d files", len(entries))
+    return nil
+}
 
-	// For every output definition in the job, we add mapping arguments.
-	// We are generating HLS directly.
-	for _, out := range job.Outputs {
-		// e.g. variant folder: /tmp/job123/1080p_5000k/
-		variantName := fmt.Sprintf("%s_%s", out.Resolution, out.Bitrate)
-		variantDir := filepath.Join(jobTempDir, variantName)
-		_ = os.MkdirAll(variantDir, 0755)
+// copyFile copies a single file from src to dst
+func (t *FFmpegTranscoder) copyFile(src, dst string) error {
+    // Open source file
+    srcFile, err := os.Open(src)
+    if err != nil {
+        return fmt.Errorf("failed to open source: %w", err)
+    }
+    defer srcFile.Close()
+    
+    // Create destination file
+    dstFile, err := os.Create(dst)
+    if err != nil {
+        return fmt.Errorf("failed to create destination: %w", err)
+    }
+    defer dstFile.Close()
+    
+    // Copy contents
+    if _, err := io.Copy(dstFile, srcFile); err != nil {
+        return fmt.Errorf("failed to copy contents: %w", err)
+    }
+    
+    // Sync to ensure data is written
+    if err := dstFile.Sync(); err != nil {
+        return fmt.Errorf("failed to sync destination: %w", err)
+    }
+    
+    return nil
+}
 
-		// HLS segment filename pattern
-		segmentPath := filepath.Join(variantDir, "segment_%03d.ts")
-		playlistPath := filepath.Join(variantDir, "index.m3u8")
+// getMediaDuration extracts total duration from media file using ffprobe
+func (t *FFmpegTranscoder) getMediaDuration(inputPath string) (float64, error) {
+    cmd := exec.Command("ffprobe",
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        inputPath,
+    )
+    
+    output, err := cmd.Output()
+    if err != nil {
+        return 0, fmt.Errorf("ffprobe failed: %w", err)
+    }
+    
+    durationStr := strings.TrimSpace(string(output))
+    duration, err := strconv.ParseFloat(durationStr, 64)
+    if err != nil {
+        return 0, fmt.Errorf("failed to parse duration: %w", err)
+    }
+    
+    return duration, nil
+}
 
-		// Scaling filter
-		// "scale=-2:1080" keeps aspect ratio, ensures width is divisible by 2 (requirement for some encoders)
-		height := strings.TrimSuffix(out.Resolution, "p")
-		scaleFilter := fmt.Sprintf("scale=-2:%s", height)
+// parseProgress monitors FFmpeg stderr and extracts progress information
+func (t *FFmpegTranscoder) parseProgress(stderr io.Reader, totalDuration float64, progressCh chan<- models.JobProgress) {
+    scanner := bufio.NewScanner(stderr)
+    
+    // Regex to extract time progress (e.g., "time=00:01:23.45")
+    timeRegex := regexp.MustCompile(`time=(\d{2}):(\d{2}):(\d{2}\.\d{2})`)
+    fpsRegex := regexp.MustCompile(`fps=\s*(\d+\.?\d*)`)
+    
+    for scanner.Scan() {
+        line := scanner.Text()
+        
+        // Extract current time
+        if matches := timeRegex.FindStringSubmatch(line); len(matches) == 4 {
+            hours, _ := strconv.Atoi(matches[1])
+            minutes, _ := strconv.Atoi(matches[2])
+            seconds, _ := strconv.ParseFloat(matches[3], 64)
+            
+            currentTime := float64(hours*3600 + minutes*60) + seconds
+            percent := (currentTime / totalDuration) * 100
+            if percent > 100 {
+                percent = 100
+            }
+            
+            // Extract FPS
+            var fps float64
+            if fpsMatches := fpsRegex.FindStringSubmatch(line); len(fpsMatches) == 2 {
+                fps, _ = strconv.ParseFloat(fpsMatches[1], 64)
+            }
+            
+            // Calculate ETA
+            var eta int
+            if fps > 0 {
+                remainingSeconds := totalDuration - currentTime
+                eta = int(remainingSeconds / fps)
+            }
+            
+            // Send progress update
+            progress := models.JobProgress{
+                Percent: percent,
+                FPS:     fps,
+                ETA:     eta,
+            }
+            
+            select {
+            case progressCh <- progress:
+            default:
+                // Channel full, skip this update
+            }
+        }
+    }
+}
 
-		args = append(args,
-			"-vf", scaleFilter,
-			"-c:v", out.Codec,      // e.g. h264_nvenc
-			"-b:v", out.Bitrate,    // e.g. 5000k
-			"-c:a", "aac",          // Audio is usually AAC for HLS
-			"-b:a", "128k",
-			"-f", "hls",
-			"-hls_time", "6",       // Standard segment duration
-			"-hls_list_size", "0",  // Keep all segments in playlist (VOD mode)
-			"-hls_segment_filename", segmentPath,
-			playlistPath,
-		)
-	}
-
-	return args
+// getScaleFilter returns FFmpeg scale filter for the given resolution
+func (t *FFmpegTranscoder) getScaleFilter(resolution string) string {
+    switch resolution {
+    case "2160p", "4K":
+        return "scale=-2:2160"
+    case "1080p":
+        return "scale=-2:1080"
+    case "720p":
+        return "scale=-2:720"
+    case "480p":
+        return "scale=-2:480"
+    case "360p":
+        return "scale=-2:360"
+    default:
+        return ""
+    }
 }
