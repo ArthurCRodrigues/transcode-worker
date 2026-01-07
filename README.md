@@ -24,7 +24,11 @@ The worker discovers:
 - **GPU Acceleration** by probing `ffmpeg` encoders (NVENC, QSV, VAAPI)
 - Real-time telemetry monitoring (CPU/RAM usage)
 
+<<<<<<< HEAD
 ### 2. Heartbeat Loop
+=======
+All this data is sent to the orchestrator in heartbeats (which shows that the worker is active) so that it can make intelligent job schedulling decisions (e.g. routing 4K HEVC jovs to GPU accelerated nodes while reserving CPU only nodes for lighter 720p tasks)
+>>>>>>> e07d3402621f3ab108ab44ed1db46d8ca56c45ef
 
 The worker continuously sends heartbeat signals that include hardware stats and current status:
 
