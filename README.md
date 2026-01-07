@@ -6,27 +6,11 @@ It turns any commodity hardware (RaspberryPi,Linux or Windows pc) into a worker 
 
 ## Workflow
 
-The worker operates in a pull-based architecture, autonomously discovering its host hardware capabilities and polling the orchestrator for transcoding jobs. 
+The worker operates in a pull-based architecture, autonomously discovering its host hardware capabilities and polling the orchestrator for transcoding jobs.
 
-### 1. Worker Registration
+### 1. Continuous Heartbeat & State Synchronization
 
-Upon startup, the worker performs a deep inspection of its host environment and registers with the orchestrator:
-
-**Registration Payload (POST `/api/v1/workers/register`):**
-```json
-{
-  "worker_id": "desktop-gaming-pc"
-}
-```
-
-The worker discovers:
-- **CPU** Architecture and core count
-- **GPU Acceleration** by probing `ffmpeg` encoders (NVENC, QSV, VAAPI)
-- Real-time telemetry monitoring (CPU/RAM usage)
-
-### 2. Heartbeat Loop
-
-The worker continuously sends heartbeat signals that include hardware stats and current status:
+Upon startup, the worker immediately begins sending heartbeat signals to the orchestrator. These heartbeats serve dual purposes: they keep the worker's registration alive and automatically re-register the worker if the orchestrator restarts. This idempotent design ensures that even if the orchestrator crashes and reboots, the next heartbeat from any worker immediately repopulates the orchestrator's state without manual intervention.
 
 **Heartbeat Payload (POST `/api/v1/workers/heartbeat`):**
 ```json
@@ -47,9 +31,14 @@ The worker continuously sends heartbeat signals that include hardware stats and 
 }
 ```
 
+The worker discovers and reports:
+- **CPU** Architecture and core count
+- **GPU Acceleration** by probing `ffmpeg` encoders (NVENC, QSV, VAAPI)
+- Real-time telemetry monitoring (CPU/RAM usage)
+
 This data enables the orchestrator to make intelligent job scheduling decisions (e.g., routing 4K HEVC jobs to GPU-accelerated nodes while reserving CPU-only nodes for lighter 720p tasks).
 
-### 3. Job Polling & Assignment
+### 2. Job Polling & Assignment
 
 The worker proactively requests work when it's `IDLE` and when the machine is not under heavy load (e.g., someone else is gaming on the PC):
 
@@ -95,7 +84,7 @@ The worker proactively requests work when it's `IDLE` and when the machine is no
 }
 ```
 
-### 4. Progress Reporting
+### 3. Progress Reporting
 
 During transcoding, the worker sends periodic progress updates:
 
@@ -110,7 +99,7 @@ During transcoding, the worker sends periodic progress updates:
 }
 ```
 
-### 5. Job Completion
+### 4. Job Completion
 
 Upon completion (success or failure), the worker finalizes the job:
 
