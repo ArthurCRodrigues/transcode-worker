@@ -11,7 +11,6 @@ import (
     "sync"
     "syscall"
     "time"
-
     "transcode-worker/internal/client"
     "transcode-worker/internal/config"
     "transcode-worker/internal/monitor"
@@ -61,13 +60,7 @@ func main() {
 
     // Handle graceful shutdown
     sigCh := make(chan os.Signal, 1)
-    signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-    // Register with orchestrator
-    ctx := context.Background()
-    if err := worker.register(ctx); err != nil {
-        log.Fatalf("Failed to register with orchestrator: %v", err)
-    }
+    signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)   
 
     // Start background workers
     worker.wg.Add(2)
@@ -81,18 +74,6 @@ func main() {
     worker.shutdown()
     
     log.Println("Worker stopped gracefully")
-}
-
-// register announces the worker to the orchestrator
-func (w *Worker) register(ctx context.Context) error {
-    log.Printf("Registering with orchestrator...")
-    
-    if err := w.client.Register(ctx, w.cfg.WorkerID); err != nil {
-        return fmt.Errorf("registration failed: %w", err)
-    }
-    
-    log.Printf("Successfully registered as worker: %s", w.cfg.WorkerID)
-    return nil
 }
 
 // heartbeatLoop sends periodic health updates to orchestrator

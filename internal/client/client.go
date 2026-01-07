@@ -79,13 +79,7 @@ func (c *OrchestratorClient) doRequest(ctx context.Context, method, path string,
 	return nil
 }
 
-// --- Implementation of Interface Methods ---
-
-func (c *OrchestratorClient) Register(ctx context.Context, workerID string) error {
-	// Simple ping to register presence
-	return c.doRequest(ctx, "POST", "/api/v1/workers/register", map[string]string{"worker_id": workerID}, nil)
-}
-
+// --- Implementation of Client Methods ---
 func (c *OrchestratorClient) Heartbeat(ctx context.Context, payload models.HeartbeatPayload) error {
 	return c.doRequest(ctx, "POST", "/api/v1/workers/heartbeat", payload, nil)
 }
