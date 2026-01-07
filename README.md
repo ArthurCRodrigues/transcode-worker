@@ -1,8 +1,8 @@
 # transcode-worker
 
-This project provides a worker service managing heavy transcoding jobs. It is part of an architecture designed for allowing low-power weak media servers to keep providing high quality data by delegating the heavy video transcoding job to available powerful devices across a worker registry.
+This project provides a worker service for managing video transcoding jobs. It is part of an architecture designed for allowing low-power weak media servers to keep providing high quality data by delegating the transcoding job to available powerful devices across a worker registry.
 
-It turns any commodity hardware (RaspberryPi,Linux or Windows pc) into a node in a unified transcoding grid.
+It turns any commodity hardware (RaspberryPi,Linux or Windows pc) into a worker node of a distributed media server.
 
 ## Workflow
 
@@ -13,7 +13,7 @@ Upon startup, the worker performs a deep inspection of its host environment. It 
 - **GPU Acceleration** by probing `ffmpeg` encoders
 - Real time telemetry monitoring (CPU/RAM usage)
 
-All this data is sent to the orchestrator in heartbeats (which shows that the worker is active) so that it can make intelligent job schedulling decisions (e,g. routing 4K HEVC jovs to GPU accelerated nodes while reserving CPU only nodes for lighter 720p tasks)
+All this data is sent to the orchestrator in heartbeats (which shows that the worker is active) so that it can make intelligent job schedulling decisions (e.g. routing 4K HEVC jovs to GPU accelerated nodes while reserving CPU only nodes for lighter 720p tasks)
 
 For performing jobs, the worker proactively requests work when it's `IDLE` and when the machine is not under heavy load (ex: someone else is gaming in the pc).
 
