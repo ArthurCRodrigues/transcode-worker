@@ -50,14 +50,22 @@ type JobResultPayload struct {
 
 // JobSpec represents a transcoding job received from the orchestrator
 type JobSpec struct {
-	JobID        string         `json:"job_id"`
-	MovieID      string         `json:"movie_id"`
-	InputSource  string         `json:"input_source"`  // Path to raw file on NAS
-	OutputBase   string         `json:"output_base"`   // Base directory for outputs
-	Outputs      []OutputSpec   `json:"outputs"`       // Target renditions
-	Profile      EncodingProfile `json:"profile"`       // Encoding settings
-	Priority     int            `json:"priority"`
-	CreatedAt    time.Time      `json:"created_at"`
+	JobID        string          `json:"job_id"`
+	MovieID      string          `json:"movie_id,omitempty"`
+	Input        InputSpec       `json:"input,omitempty"`        // New format
+	InputSource  string          `json:"input_source,omitempty"` // Legacy format - Path to raw file on NAS
+	OutputBase   string          `json:"output_base,omitempty"`  // Base directory for outputs
+	Outputs      []OutputSpec    `json:"outputs"`                // Target renditions
+	HLSSettings  *HLSSettings    `json:"hls_settings,omitempty"` // New format
+	Profile      *EncodingProfile `json:"profile,omitempty"`      // Legacy format - Encoding settings
+	Priority     int             `json:"priority,omitempty"`
+	CreatedAt    time.Time       `json:"created_at,omitempty"`
+}
+
+// InputSpec defines the input source (new format)
+type InputSpec struct {
+	SourceURL string `json:"source_url"` // Path to raw file (relative or absolute)
+	Format    string `json:"format"`     // e.g. "mkv", "mp4", "avi"
 }
 
 // OutputSpec defines a single output rendition (e.g., 1080p variant)
@@ -68,13 +76,34 @@ type OutputSpec struct {
 	DestPath   string `json:"dest_path"`  // Final destination path on NAS
 }
 
-// EncodingProfile contains encoding parameters
-type EncodingProfile struct {
-	Preset       string `json:"preset"`        // e.g. "fast", "medium", "slow"
-	HLSSegmentDuration int `json:"hls_segment_duration"` // Seconds per segment
-	AudioCodec   string `json:"audio_codec"`   // e.g. "aac"
-	AudioBitrate string `json:"audio_bitrate"` // e.g. "128k"
+// HLSSettings contains HLS-specific parameters (new format)
+type HLSSettings struct {
+	MasterPlaylistName string `json:"master_playlist_name"` // e.g. "index.m3u8"
+	SegmentTime        int    `json:"segment_time"`         // Seconds per segment
 }
+
+// EncodingProfile contains encoding parameters (legacy format)
+type EncodingProfile struct {
+	Preset             string `json:"preset,omitempty"`              // e.g. "fast", "medium", "slow"
+	HLSSegmentDuration int    `json:"hls_segment_duration,omitempty"` // Seconds per segment
+	AudioCodec         string `json:"audio_codec,omitempty"`         // e.g. "aac"
+	AudioBitrate       string `json:"audio_bitrate,omitempty"`       // e.g. "128k"
+}
+
+
+
+// GetHLSSegmentDuration returns the HLS segment duration, handling both new and legacy formats
+func (j *JobSpec) GetHLSSegmentDuration() int {
+	if j.HLSSettings != nil && j.HLSSettings.SegmentTime > 0 {
+		return j.HLSSettings.SegmentTime
+	}
+	if j.Profile != nil && j.Profile.HLSSegmentDuration > 0 {
+		return j.Profile.HLSSegmentDuration
+	}
+	return 6 // default
+}
+
+
 
 // JobProgress represents real-time progress during transcoding
 type JobProgress struct {
@@ -90,4 +119,59 @@ type TranscodeJob struct {
 	StartTime time.Time
 	EndTime   time.Time
 	Error     error
+}
+
+
+
+// Helper methods for JobSpec
+
+// GetInputSource returns the input source path, handling both formats
+func (j *JobSpec) GetInputSource() string {
+    if j.Input.SourceURL != "" {
+        return j.Input.SourceURL
+    }
+    return j.InputSource
+}
+
+// SetInputSource sets the input source in both fields for compatibility
+func (j *JobSpec) SetInputSource(path string) {
+    j.InputSource = path
+    if j.Input.SourceURL != "" || j.Input.Format != "" {
+        j.Input.SourceURL = path
+    }
+}
+
+// GetSegmentTime returns the HLS segment duration, handling both formats
+func (j *JobSpec) GetSegmentTime() int {
+    if j.HLSSettings != nil && j.HLSSettings.SegmentTime > 0 {
+        return j.HLSSettings.SegmentTime
+    }
+    if j.Profile != nil && j.Profile.HLSSegmentDuration > 0 {
+        return j.Profile.HLSSegmentDuration
+    }
+    return 6 // Default to 6 seconds
+}
+
+// GetAudioCodec returns the audio codec, handling both formats
+func (j *JobSpec) GetAudioCodec() string {
+    if j.Profile != nil && j.Profile.AudioCodec != "" {
+        return j.Profile.AudioCodec
+    }
+    return "aac" // Default codec
+}
+
+// GetAudioBitrate returns the audio bitrate, handling both formats
+func (j *JobSpec) GetAudioBitrate() string {
+    if j.Profile != nil && j.Profile.AudioBitrate != "" {
+        return j.Profile.AudioBitrate
+    }
+    return "128k" // Default bitrate
+}
+
+// GetMasterPlaylistName returns the master playlist filename
+func (j *JobSpec) GetMasterPlaylistName() string {
+    if j.HLSSettings != nil && j.HLSSettings.MasterPlaylistName != "" {
+        return j.HLSSettings.MasterPlaylistName
+    }
+    return "index.m3u8" // Default name
 }
