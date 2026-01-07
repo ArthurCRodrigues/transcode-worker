@@ -1,8 +1,8 @@
 # transcode-worker
 
-This project provides a worker service managing heavy transcoding jobs. It is part of an architecture designed for allowing low-power weak media servers to keep providing high quality data by delegating the heavy video transcoding job to available powerful devices across a worker registry.
+This project provides a worker service for managing video transcoding jobs. It is part of an architecture designed for allowing low-power weak media servers to keep providing high quality data by delegating the transcoding job to available powerful devices across a worker registry.
 
-It turns any commodity hardware (RaspberryPi,Linux or Windows pc) into a node in a unified transcoding grid.
+It turns any commodity hardware (RaspberryPi,Linux or Windows pc) into a worker node of a distributed media server.
 
 ## Workflow
 
