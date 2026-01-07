@@ -1,5 +1,26 @@
-orchestrator_url: <url-to-your-orchestrator-service>
-worker_id: <unique-identifier-for-this-worker>
-nas_mount_path: <path-to-nas-mount>
-enable_hw_accel: <true-or-false>
-log_level: <debug|info|warn|error>
+# config.yml
+
+# [REQUIRED] The base URL of the Udoo Quad control plane
+orchestrator_url: "http://192.168.1.100:8080"
+
+# [OPTIONAL] Unique identifier for this worker.
+# If left empty, the worker will use the machine's OS hostname.
+worker_id: ""
+
+# [REQUIRED] Local path where the NAS storage is mounted.
+# The worker assumes it can read raw files and write output here.
+nas_mount_path: "/mnt/nas"
+
+# [OPTIONAL] Directory for temporary transcoding artifacts.
+# Ideally an SSD path for speed. Defaults to /tmp/transcode if not set.
+temp_dir: "/tmp/transcode-worker"
+
+# [OPTIONAL] How often to report health to the Control Plane (in seconds).  
+heartbeat_interval: 10s
+
+# [OPTIONAL] Limits concurrent ffmpeg processes.
+# Set to 1 for consumer hardware to avoid thermal throttling.
+max_concurrent_jobs: 1
+
+# [OPTIONAL] Logging verbosity: debug, info, warn, error
+log_level: "info"
