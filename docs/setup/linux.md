@@ -9,12 +9,6 @@ cd /path/to/transcode-worker
 go build -o bin/worker cmd/worker/main.go
 ```
 
-Or use the Makefile:
-
-```bash
-make build
-```
-
 ## 2. Configure the Worker
 
 Copy and edit the configuration file:
