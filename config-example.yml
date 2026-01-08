@@ -15,12 +15,9 @@ nas_mount_path: "/mnt/nas"
 # Ideally an SSD path for speed. Defaults to /tmp/transcode if not set.
 temp_dir: "/tmp/transcode-worker"
 
-# [OPTIONAL] How often to report health to the Control Plane (in seconds).  
-heartbeat_interval: 10s
-
-# [OPTIONAL] Limits concurrent ffmpeg processes.
-# Set to 1 for consumer hardware to avoid thermal throttling.
-max_concurrent_jobs: 1
+# [OPTIONAL] How often to sync state with the orchestrator (in seconds).
+# This unified sync loop handles both heartbeat and job assignment.
+sync_interval: 10s
 
 # [OPTIONAL] Logging verbosity: debug, info, warn, error
 log_level: "info"
