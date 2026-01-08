@@ -6,13 +6,35 @@ It turns any commodity hardware (RaspberryPi,Linux or Windows pc) into a worker 
 
 ## Workflow
 
-The worker operates in a pull-based architecture, autonomously discovering its host hardware capabilities and polling the orchestrator for transcoding jobs.
+The worker operates in a pull-based architecture, autonomously discovering its host hardware capabilities and synchronizing with the orchestrator for transcoding jobs.
 
-### 1. Continuous Heartbeat & State Synchronization
+### 1. Initial Registration
 
-Upon startup, the worker immediately begins sending heartbeat signals to the orchestrator. These heartbeats serve dual purposes: they keep the worker's registration alive and automatically re-register the worker if the orchestrator restarts. This idempotent design ensures that even if the orchestrator crashes and reboots, the next heartbeat from any worker immediately repopulates the orchestrator's state without manual intervention.
+On startup, the worker performs a deep inspection of its host environment and registers once with the orchestrator, declaring its static capabilities:
 
-**Heartbeat Payload (POST `/api/v1/workers/heartbeat`):**
+**Registration Payload (POST `/api/v1/workers/register`):**
+```json
+{
+  "worker_id": "desktop-gaming-pc",
+  "capabilities": {
+    "supported_codecs": ["h264_nvenc", "hevc_nvenc", "libx264"],
+    "has_gpu": true,
+    "gpu_type": "nvidia",
+    "max_resolution": "4k"
+  }
+}
+```
+
+The worker discovers:
+- **CPU** Architecture and core count  
+- **GPU Acceleration** by probing `ffmpeg` encoders (NVENC, QSV, VAAPI)
+- **Supported Codecs** for hardware and software encoding
+
+### 2. Continuous Sync Loop (Heartbeat + Job Assignment)
+
+The worker continuously syncs with the orchestrator through a unified bidirectional endpoint. This replaces the old pattern of separate heartbeat and job polling loops:
+
+**Sync Payload (POST `/api/v1/workers/sync`):**
 ```json
 {
   "worker_id": "desktop-gaming-pc",
@@ -20,69 +42,49 @@ Upon startup, the worker immediately begins sending heartbeat signals to the orc
   "hardware_stats": {
     "cpu_percent": 15.3,
     "ram_percent": 42.1,
-    "is_busy": false,
-    "accelerator": {
-      "type": "nvenc",
-      "available": true,
-      "codecs": ["h264_nvenc", "hevc_nvenc"]
-    }
+    "is_busy": false
   },
   "current_job_id": ""
 }
 ```
 
-The worker discovers and reports:
-- **CPU** Architecture and core count
-- **GPU Acceleration** by probing `ffmpeg` encoders (NVENC, QSV, VAAPI)
-- Real-time telemetry monitoring (CPU/RAM usage)
-
-This data enables the orchestrator to make intelligent job scheduling decisions (e.g., routing 4K HEVC jobs to GPU-accelerated nodes while reserving CPU-only nodes for lighter 720p tasks).
-
-### 2. Job Polling & Assignment
-
-The worker proactively requests work when it's `IDLE` and when the machine is not under heavy load (e.g., someone else is gaming on the PC):
-
-**Job Request Payload (POST `/api/v1/jobs/request`):**
+**Sync Response:**
 ```json
 {
-  "worker_id": "desktop-gaming-pc",
-  "capabilities": {
-    "supported_codecs": ["h264_nvenc", "hevc_nvenc", "libx264"],
-    "has_gpu": true,
-    "gpu_type": "nvidia"
-  }
-}
-```
-
-**Job Assignment Response:**
-```json
-{
-  "job_id": "job-1767791635",
-  "movie_id": "movie-456",
-  "input": {
-    "source_url": "movies/sample_3840x2160.mkv",
-    "format": "mkv"
-  },
-  "outputs": [
-    {
-      "resolution": "1080p",
-      "bitrate": "5000k",
-      "codec": "h264_nvenc",
-      "dest_path": "processed/sample/1080p/"
+  "ack": true,
+  "assigned_job": {
+    "job_id": "job-1767791635",
+    "movie_id": "movie-456",
+    "input": {
+      "source_url": "movies/sample_3840x2160.mkv",
+      "format": "mkv"
     },
-    {
-      "resolution": "720p",
-      "bitrate": "2500k",
-      "codec": "h264_nvenc",
-      "dest_path": "processed/sample/720p/"
+    "outputs": [
+      {
+        "resolution": "720p",
+        "bitrate": "2500k",
+        "codec": "h264_nvenc",
+        "dest_path": "processed/sample/720p/"
+      }
+    ],
+    "hls_settings": {
+      "master_playlist_name": "index.m3u8",
+      "segment_time": 6
     }
-  ],
-  "hls_settings": {
-    "master_playlist_name": "index.m3u8",
-    "segment_time": 6
   }
 }
 ```
+
+The sync loop serves dual purposes:
+- **When BUSY**: Acts as a heartbeat to keep the worker registered
+- **When IDLE**: Receives job assignments directly in the response
+
+**Lazy Re-Registration**: If the orchestrator restarts and loses state, the next sync will fail with HTTP 404. The worker automatically re-registers and retries the sync, ensuring zero-downtime recovery.
+
+**Serial Execution Model**: The worker processes exactly one job at a time. When a job is assigned, the worker status changes to `BUSY` and the `current_job_id` field is populated. During this time, the sync loop continues but no new jobs are assigned. This ensures:
+- Predictable resource usage (no job contention)
+- Simpler error handling and recovery
+- Clear reporting of what the worker is doing at any moment
 
 ### 3. Progress Reporting
 
