@@ -2,7 +2,9 @@
 
 This project provides a worker service for managing video transcoding jobs. It is part of an architecture designed for allowing low-power weak media servers to keep providing high quality data by delegating the transcoding job to available powerful devices across a worker registry.
 
-It turns any commodity hardware (RaspberryPi,Linux or Windows pc) into a worker node of a distributed media server. It does video segmentation of the input source and transcode heavy formats into web friendly ones.
+It turns any commodity hardware (RaspberryPi,Linux or Windows pc) into a worker node of a distributed media server. 
+
+It does video segmentation of the input source and transcode heavy formats into web friendly ones.
 
 ## Workflow
 
