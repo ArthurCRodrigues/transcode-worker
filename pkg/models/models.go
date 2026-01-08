@@ -4,15 +4,8 @@ package models
 
 // RegistrationPayload is sent once on startup to declare worker capabilities
 type RegistrationPayload struct {
-	WorkerID     string              `json:"worker_id"`
-	Capabilities WorkerCapabilities  `json:"capabilities"`
-}
-
-type WorkerCapabilities struct {
-	SupportedCodecs []string `json:"supported_codecs"` // e.g. ["h264_nvenc", "hevc_nvenc", "libx264"]
-	HasGPU          bool     `json:"has_gpu"`
-	GPUType         string   `json:"gpu_type,omitempty"` // e.g. "nvidia", "intel", "amd"
-	MaxResolution   string   `json:"max_resolution,omitempty"` // e.g. "4k", "1080p"
+	WorkerID     string   `json:"worker_id"`
+	Capabilities []string `json:"capabilities"` // e.g. ["1080p", "720p", "nvenc", "h264_nvenc", "4k"]
 }
 
 // ===== Worker Sync (Bidirectional Heartbeat + Job Assignment) =====

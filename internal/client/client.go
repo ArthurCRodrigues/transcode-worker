@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -95,25 +95,24 @@ func (e *OrchestratorStateError) Error() string {
 
 // Register declares the worker's capabilities to the orchestrator
 // Called once on startup and automatically on state loss recovery
-func (c *OrchestratorClient) Register(ctx context.Context, capabilities models.WorkerCapabilities) error {
+func (c *OrchestratorClient) Register(ctx context.Context, capabilities []string) error {
 	payload := models.RegistrationPayload{
 		WorkerID:     c.workerID,
 		Capabilities: capabilities,
 	}
 
-	log.Printf("Registering worker with orchestrator...")
+	slog.Info("Registering worker with orchestrator", "worker_id", c.workerID)
 	if err := c.doRequest(ctx, "POST", "/api/v1/workers/register", payload, nil); err != nil {
 		return fmt.Errorf("registration failed: %w", err)
 	}
 
-	log.Printf("Successfully registered worker: %s", c.workerID)
+	slog.Info("Successfully registered worker", "worker_id", c.workerID)
 	return nil
 }
 
 // ===== Worker Sync (Bidirectional Heartbeat + Job Assignment) =====
 
 // Sync sends worker state and receives potential job assignment
-// This replaces the old separate Heartbeat + RequestJob pattern
 func (c *OrchestratorClient) Sync(ctx context.Context, payload models.SyncPayload) (*models.SyncResponse, error) {
 	var syncResp models.SyncResponse
 
