@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -24,7 +24,7 @@ type Worker struct {
 	client       *client.OrchestratorClient
 	monitor      *monitor.SystemMonitor
 	transcoder   *transcoder.FFmpegTranscoder
-	capabilities models.WorkerCapabilities
+	capabilities []string
 	
 	currentJob *models.JobSpec
 	jobMutex   sync.Mutex
@@ -38,13 +38,34 @@ func main() {
 	// Load configuration
 	cfg, err := config.Load(".")
 	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
+		slog.Error("Failed to load config", "error", err)
+		os.Exit(1)
 	}
 
-	log.Printf("Starting transcode worker: %s", cfg.WorkerID)
-	log.Printf("Orchestrator URL: %s", cfg.OrchestratorURL)
-	log.Printf("NAS Mount Path: %s", cfg.NasMountPath)
-	log.Printf("Temp Directory: %s", cfg.TempDir)
+	// Configure structured logging
+	var level slog.Level
+	switch cfg.LogLevel {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	// Use JSON handler for production (machine-readable)
+	// For development, you can use NewTextHandler instead
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level}))
+	slog.SetDefault(logger)
+
+	slog.Info("Starting transcode worker",
+		"worker_id", cfg.WorkerID,
+		"orchestrator_url", cfg.OrchestratorURL,
+		"nas_mount_path", cfg.NasMountPath,
+		"temp_dir", cfg.TempDir,
+		"log_level", cfg.LogLevel)
 
 	// Initialize components
 	orchestratorClient := client.NewOrchestratorClient(cfg)
@@ -63,20 +84,18 @@ func main() {
 	ctx := context.Background()
 	caps, err := systemMonitor.GetCapabilities(ctx)
 	if err != nil {
-		log.Fatalf("Failed to discover capabilities: %v", err)
+		slog.Error("Failed to discover capabilities", "error", err)
+		os.Exit(1)
 	}
 
-	worker.capabilities = models.WorkerCapabilities{
-		SupportedCodecs: caps,
-		HasGPU:          containsGPU(caps),
-		GPUType:         detectGPUType(caps),
-	}
+	worker.capabilities = caps
 
-	log.Printf("Discovered capabilities: %+v", worker.capabilities)
+	slog.Info("Discovered capabilities", "capabilities", caps)
 
 	// Initial registration
 	if err := worker.register(); err != nil {
-		log.Fatalf("Failed to register with orchestrator: %v", err)
+		slog.Error("Failed to register with orchestrator", "error", err)
+		os.Exit(1)
 	}
 
 	// Handle graceful shutdown
@@ -89,11 +108,11 @@ func main() {
 
 	// Wait for shutdown signal
 	<-sigCh
-	log.Println("Shutdown signal received, cleaning up...")
+	slog.Info("Shutdown signal received, cleaning up...")
 	
 	worker.shutdown()
 	
-	log.Println("Worker stopped gracefully")
+	slog.Info("Worker stopped gracefully")
 }
 
 // register declares the worker's capabilities to the orchestrator
@@ -111,17 +130,17 @@ func (w *Worker) syncLoop() {
 	ticker := time.NewTicker(w.cfg.SyncInterval)
 	defer ticker.Stop()
 	
-	log.Printf("Starting sync loop (interval: %v)", w.cfg.SyncInterval)
+	slog.Info("Starting sync loop", "interval", w.cfg.SyncInterval)
 	
 	for {
 		select {
 		case <-ticker.C:
 			if err := w.performSync(); err != nil {
-				log.Printf("Sync failed: %v", err)
+				slog.Error("Sync failed", "error", err)
 			}
 			
 		case <-w.shutdownCh:
-			log.Println("Sync loop stopping...")
+			slog.Info("Sync loop stopping...")
 			return
 		}
 	}
@@ -163,7 +182,7 @@ func (w *Worker) performSync() error {
 	if err != nil {
 		// Check if orchestrator lost state (needs re-registration)
 		if _, isStateError := err.(*client.OrchestratorStateError); isStateError {
-			log.Println("Orchestrator lost state, re-registering...")
+			slog.Warn("Orchestrator lost state, re-registering...")
 			if regErr := w.register(); regErr != nil {
 				return fmt.Errorf("re-registration failed: %w", regErr)
 			}
@@ -184,15 +203,17 @@ func (w *Worker) performSync() error {
 		w.jobMutex.Unlock()
 		
 		if !isIdle {
-			log.Printf("Rejecting job %s: already processing %s", syncResp.AssignedJob.JobID, w.currentJob.JobID)
+			slog.Warn("Rejecting job assignment - already processing",
+				"assigned_job", syncResp.AssignedJob.JobID,
+				"current_job", w.currentJob.JobID)
 			return nil
 		}
 		
-		log.Printf("Received job assignment: %s", syncResp.AssignedJob.JobID)
+		slog.Info("Received job assignment", "job_id", syncResp.AssignedJob.JobID)
 		
 		// Resolve paths and execute job
 		if err := w.resolveJobPaths(syncResp.AssignedJob); err != nil {
-			log.Printf("Failed to resolve job paths: %v", err)
+			slog.Error("Failed to resolve job paths", "error", err)
 			return nil
 		}
 		
@@ -213,7 +234,7 @@ func (w *Worker) resolveJobPaths(job *models.JobSpec) error {
 	resolvedInput := w.resolveNASPath(inputSource)
 	job.SetInputSource(resolvedInput)
 	
-	log.Printf("Resolved input path: %s", resolvedInput)
+	slog.Debug("Resolved input path", "path", resolvedInput)
 	
 	// Verify input file exists
 	if _, err := os.Stat(resolvedInput); os.IsNotExist(err) {
@@ -223,13 +244,15 @@ func (w *Worker) resolveJobPaths(job *models.JobSpec) error {
 	// Resolve output base path if present
 	if job.OutputBase != "" {
 		job.OutputBase = w.resolveNASPath(job.OutputBase)
-		log.Printf("Resolved output base: %s", job.OutputBase)
+		slog.Debug("Resolved output base", "path", job.OutputBase)
 	}
 	
 	// Resolve each output rendition path
 	for i := range job.Outputs {
 		job.Outputs[i].DestPath = w.resolveNASPath(job.Outputs[i].DestPath)
-		log.Printf("Resolved output [%s]: %s", job.Outputs[i].Resolution, job.Outputs[i].DestPath)
+		slog.Debug("Resolved output path",
+			"resolution", job.Outputs[i].Resolution,
+			"path", job.Outputs[i].DestPath)
 		
 		// Ensure output directory exists
 		if err := os.MkdirAll(job.Outputs[i].DestPath, 0755); err != nil {
@@ -320,7 +343,7 @@ func (w *Worker) reportProgress(ctx context.Context, jobID string, progressCh <-
 				}
 				
 				if err := w.client.UpdateJobStatus(updateCtx, jobID, payload); err != nil {
-					log.Printf("Failed to send progress update: %v", err)
+					slog.Warn("Failed to send progress update", "error", err)
 				}
 				cancel()
 			}
@@ -343,11 +366,17 @@ func (w *Worker) finalizeJob(job *models.JobSpec, jobErr error, duration time.Du
 	}
 	
 	if jobErr != nil {
-		log.Printf("Job %s FAILED: %v", job.JobID, jobErr)
+		slog.Error("Job failed",
+			"job_id", job.JobID,
+			"error", jobErr,
+			"duration_ms", duration.Milliseconds())
 		payload.Status = "FAILED"
 		payload.ErrorMsg = jobErr.Error()
 	} else {
-		log.Printf("Job %s COMPLETED in %v", job.JobID, duration)
+		slog.Info("Job completed",
+			"job_id", job.JobID,
+			"duration", duration.String(),
+			"duration_ms", duration.Milliseconds())
 		payload.Status = "COMPLETED"
 		
 		// Construct manifest URL
@@ -359,12 +388,12 @@ func (w *Worker) finalizeJob(job *models.JobSpec, jobErr error, duration time.Du
 			playlistName := job.GetMasterPlaylistName()
 			payload.ManifestURL = fmt.Sprintf("/%s/%s", relativeOutputPath, playlistName)
 			
-			log.Printf("Manifest URL: %s", payload.ManifestURL)
+			slog.Info("Generated manifest", "url", payload.ManifestURL)
 		}
 	}
 	
 	if err := w.client.FinalizeJob(ctx, job.JobID, payload); err != nil {
-		log.Printf("Failed to finalize job: %v", err)
+		slog.Error("Failed to finalize job", "job_id", job.JobID, "error", err)
 	}
 }
 
@@ -373,7 +402,7 @@ func (w *Worker) shutdown() {
 	// Cancel current job if any
 	w.jobMutex.Lock()
 	if w.cancelJob != nil {
-		log.Println("Cancelling current job...")
+		slog.Warn("Cancelling current job due to shutdown")
 		w.cancelJob()
 	}
 	w.jobMutex.Unlock()
@@ -384,39 +413,5 @@ func (w *Worker) shutdown() {
 	// Wait for goroutines to finish
 	w.wg.Wait()
 	
-	log.Println("Shutdown complete")
-}
-
-// Helper functions
-
-func containsGPU(codecs []string) bool {
-	gpuCodecs := []string{"nvenc", "qsv", "vaapi", "v4l2m2m", "videotoolbox"}
-	for _, codec := range codecs {
-		for _, gpuCodec := range gpuCodecs {
-			if strings.Contains(codec, gpuCodec) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func detectGPUType(codecs []string) string {
-	codecStr := strings.Join(codecs, ",")
-	if strings.Contains(codecStr, "nvenc") {
-		return "nvidia"
-	}
-	if strings.Contains(codecStr, "qsv") {
-		return "intel"
-	}
-	if strings.Contains(codecStr, "vaapi") {
-		return "vaapi"
-	}
-	if strings.Contains(codecStr, "v4l2m2m") {
-		return "raspberry-pi"
-	}
-	if strings.Contains(codecStr, "videotoolbox") {
-		return "apple"
-	}
-	return ""
+	slog.Info("Shutdown complete")
 }
