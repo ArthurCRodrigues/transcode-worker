@@ -53,8 +53,8 @@ func (m *SystemMonitor) GetStats(ctx context.Context) (models.HardwareStats, err
 	if err != nil {
 		return stats, fmt.Errorf("failed to get mem stats: %w", err)
 	}
-	// Convert bytes to GB
-	stats.RamAvailableGB = float64(v.Available) / 1024 / 1024 / 1024
+	// UsedPercent returns percentage of memory used (0.0 to 100.0)
+	stats.RAMPercent = v.UsedPercent
 
 	// 2. Get CPU Percent (over the last 500ms)
 	// Passing 0 as duration returns immediate value (gauge), but a small interval is more accurate.
@@ -64,13 +64,12 @@ func (m *SystemMonitor) GetStats(ctx context.Context) (models.HardwareStats, err
 	}
 	
 	if len(cpuPct) > 0 {
-		stats.CpuUsagePercent = cpuPct[0]
+		stats.CPUPercent = cpuPct[0]
 	}
 
 	// 3. Busy Logic (Optional Domain Logic)
-	// If CPU > 80% or RAM < 1GB, mark as busy so the scheduler skips us.
-	stats.IsBusy = stats.CpuUsagePercent > 80.0 || stats.RamAvailableGB < 1.0
-
+	// If CPU > 80% or RAM > 90%, mark as busy so the scheduler skips us.
+	stats.IsBusy = stats.CPUPercent > 80.0 || stats.RAMPercent > 90.0
 
 	return stats, nil
 }
