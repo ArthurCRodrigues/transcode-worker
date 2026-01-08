@@ -31,8 +31,7 @@ orchestrator_url: "http://192.168.1.100:8080"  # Your orchestrator IP
 nas_mount_path: "/mnt/nas"                      # Your NAS mount point
 temp_dir: "/tmp/transcode-worker"               # Fast local storage
 worker_id: ""                                   # Leave empty to use hostname
-heartbeat_interval: 10s
-max_concurrent_jobs: 1
+sync_interval: 10s                              # How often to sync with orchestrator
 log_level: "info"
 ```
 
