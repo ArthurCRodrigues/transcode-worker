@@ -101,8 +101,8 @@ func (t *FFmpegTranscoder) transcodeRendition(
     }
     
     // Add audio encoding
-    audioCodec := job.GetAudioCodec()
-    audioBitrate := job.GetAudioBitrate()
+    audioCodec := job.GetAudioCodec(&output)
+    audioBitrate := job.GetAudioBitrate(&output)
     args = append(args,
         "-c:a", audioCodec,
         "-b:a", audioBitrate,
