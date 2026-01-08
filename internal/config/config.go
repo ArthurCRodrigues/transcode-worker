@@ -12,13 +12,12 @@ import (
 
 // Config holds all static configuration required by the worker.
 type Config struct {
-	OrchestratorURL   string        `mapstructure:"orchestrator_url"`
-	WorkerID          string        `mapstructure:"worker_id"`
-	NasMountPath      string        `mapstructure:"nas_mount_path"`
-	TempDir           string        `mapstructure:"temp_dir"`
-	HeartbeatInterval time.Duration `mapstructure:"heartbeat_interval"`
-	MaxConcurrentJobs int           `mapstructure:"max_concurrent_jobs"`
-	LogLevel          string        `mapstructure:"log_level"`
+	OrchestratorURL string        `mapstructure:"orchestrator_url"`
+	WorkerID        string        `mapstructure:"worker_id"`
+	NasMountPath    string        `mapstructure:"nas_mount_path"`
+	TempDir         string        `mapstructure:"temp_dir"`
+	SyncInterval    time.Duration `mapstructure:"sync_interval"`
+	LogLevel        string        `mapstructure:"log_level"`
 }
 
 // Load reads configuration from config.yml and environment variables.
@@ -28,8 +27,7 @@ func Load(path string) (*Config, error) {
 
 	// 1. Set Defaults
 	v.SetDefault("temp_dir", "/tmp/transcode")
-	v.SetDefault("heartbeat_interval", "10s")
-	v.SetDefault("max_concurrent_jobs", 1)
+	v.SetDefault("sync_interval", "10s")
 	v.SetDefault("log_level", "info")
 
 	// 2. Load from File
